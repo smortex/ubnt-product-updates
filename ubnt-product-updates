@@ -1,0 +1,71 @@
+#!/usr/bin/env ruby
+
+require 'nokogiri'
+require 'open-uri'
+require 'json'
+require 'xdg'
+
+class CacheFile
+  def initialize
+    @path = File.join(XDG['CACHE_HOME'].to_s, 'ubnt-product-updates', 'known-versions')
+    directory = File.dirname(@path)
+    Dir.mkdir(directory) unless File.directory?(directory)
+    read
+  end
+
+  def include?(item)
+    @data.include?(item)
+  end
+
+  def data=(data)
+    IO.write(@path, { 'known_versions' => data }.to_json)
+    @data = data
+  end
+
+  private
+
+  def read
+    @data = JSON.parse(IO.read(@path))['known_versions']
+  rescue Errno::ENOENT
+    @data = []
+  end
+
+  def save(data)
+    IO.write(@path, { 'known_versions' => data }.to_json)
+  end
+end
+
+def normalize_space(string)
+  string.strip.gsub(/\s+/, ' ')
+end
+
+cache = CacheFile.new
+
+page = Nokogiri::HTML(open('https://www.ubnt.com/product-updates/'))
+
+current_versions = page.css('div.update__item').map do |node|
+  text = node.css('.update__title').text.strip
+  date = node.css('.update__date').text.strip
+  link = node.css('.update__title a').first['href']
+
+  {
+    'text' => text,
+    'date' => date,
+    'link' => link,
+  }
+end
+
+if current_versions.count < 5
+  # On 2018-07-27, 31 products are listed
+  raise "Only found #{current_versions.count} products.  This is likely a problem."
+end
+
+current_versions.each do |version|
+  next if cache.include?(version)
+
+  puts "[#{version['date']}] #{version['text']}"
+  puts version['link']
+  puts
+end
+
+cache.data = current_versions
